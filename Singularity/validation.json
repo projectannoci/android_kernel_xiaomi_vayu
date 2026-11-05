@@ -1,0 +1,56 @@
+{
+  "build": {
+    "exit": 0,
+    "release": "4.14.336-Singularity-v1-ProjectNoci",
+    "version": 2,
+    "compiler": "Clang/LLD18.1.3",
+    "embedded_config_exact": true,
+    "required_root_bus_symbols": "present",
+    "undefined_vmlinux_symbols": 0
+  },
+  "unit_tests": {
+    "passed": 29,
+    "scope": [
+      "Boot unpack status",
+      "Actual init exec arguments and once-only data-ready scan",
+      "Manager rename asynchronous dispatch",
+      "Package UID parser",
+      "4.14 shash descriptor initialization",
+      "Bus floor expiration/screen-off/wraparound",
+      "Actual devfreq maximum/minimum clamp order"
+    ]
+  },
+  "arm_repack_tests": {
+    "passed": 9,
+    "seconds": 64.334,
+    "scope": [
+      "Actual user boot reference",
+      "Header0/header2 raw/gzip",
+      "No ramdisk",
+      "Integrity/repack/size failure before write"
+    ]
+  },
+  "package_checks": "ZIP CRC, executable modes, payload hashes, kernel name and paths pass",
+  "dtb_dtbo": "Exact same bytes as boot-confirmed R2 pair; overlay compatibility already checked on all four SM8150/SM8150P bases",
+  "apk": "Official3.2.0 APK v2 certificate length860, SHA256 947ae944f3de4ed4c21a7e4f7953ecf351bfa2b36239da37a34111ad29993eef matches accepted driver key; no prohibited v1/v3 signing block",
+  "zip": {
+    "filename": "Singularity_v1_ProjectNoci_vayu_OSS_SukiSU_FINAL.zip",
+    "size": 20407473,
+    "sha256": "0b8a9641bf2a77ce67d633fe1121260934e891eb88336a0db735617153986865"
+  },
+  "payload": {
+    "Image": "042b194338730ed9551e47eca3d395fca779fa7d738f522b87f4f4003bcf358f",
+    "dtb": "602d9e195e12c2433bf5263e08a4abb74303f9220d2b8a98abc8c380c5e6909d",
+    "dtbo.img": "76ec784e1a391ca054bcec76596ba00176ac7a6890cfb81ace40ac7dd86d8fda"
+  },
+  "physical_results": {
+    "R2_boot": "confirmed by user and screenshot",
+    "R2_root": "unsupported as shown by screenshot",
+    "final_boot": "unknown",
+    "final_root": "unknown",
+    "gaming_FPS": "unknown"
+  },
+  "full_vendor_module_ABI": "unknown; no complete vendor partitions/modules supplied",
+  "kcal": false,
+  "kpm": false
+}

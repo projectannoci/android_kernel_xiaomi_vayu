@@ -1,0 +1,295 @@
+--- a/drivers/kernelsu/throne_tracker.c
++++ b/drivers/kernelsu/throne_tracker.c
+@@ -7,6 +7,8 @@
+ #include <linux/version.h>
+ #include <linux/stat.h>
+ #include <linux/namei.h>
++#include <linux/workqueue.h>
++#include <linux/jiffies.h>
+ 
+ #include "allowlist.h"
+ #include "klog.h" // IWYU pragma: keep
+@@ -29,109 +31,86 @@
+ 	char package[KSU_MAX_PACKAGE_NAME];
+ };
+ 
+-// Try read whitelist first, fallback if failed
++/* PackageManager's root-owned list is available on stock AOSP vendors too. */
++#define SYSTEM_PACKAGES_LIST_PATH "/data/system/packages.list"
++
++static int parse_package_uid_line(char *line, bool package_first, char *package, u32 *uid)
++{
++ char *first, *second, *name, *number;
++ line = skip_spaces(line);
++ first = strsep(&line, " \t\r");
++ if (!line || !*first)
++  return -EINVAL;
++ line = skip_spaces(line);
++ second = strsep(&line, " \t\r");
++ if (!second || !*second)
++  return -EINVAL;
++ name = package_first ? first : second;
++ number = package_first ? second : first;
++ if (strlen(name) >= KSU_MAX_PACKAGE_NAME)
++  return -ENAMETOOLONG;
++ if (kstrtou32(number, 10, uid))
++  return -EINVAL;
++ memcpy(package, name, strlen(name) + 1);
++ return 0;
++}
++
++static int read_uid_file(struct list_head *uid_list, const char *path, bool package_first)
++{
++ struct file *fp;
++ char *content, *line, *cursor;
++ loff_t size, pos = 0;
++ ssize_t count;
++ int found = 0;
++ fp = ksu_filp_open_compat(path, O_RDONLY, 0);
++ if (IS_ERR(fp))
++  return PTR_ERR(fp);
++ size = i_size_read(file_inode(fp));
++ if (size <= 0 || size > 4 * 1024 * 1024) {
++  filp_close(fp, NULL);
++  return -ENODATA;
++ }
++ content = kzalloc(size + 1, GFP_KERNEL);
++ if (!content) {
++  filp_close(fp, NULL);
++  return -ENOMEM;
++ }
++ count = ksu_kernel_read_compat(fp, content, size, &pos);
++ filp_close(fp, NULL);
++ if (count != size) {
++  kfree(content);
++  return -EIO;
++ }
++ cursor = content;
++ while ((line = strsep(&cursor, "\n"))) {
++  char package[KSU_MAX_PACKAGE_NAME];
++  u32 uid;
++  struct uid_data *entry;
++  if (parse_package_uid_line(line, package_first, package, &uid))
++   continue;
++  entry = kzalloc(sizeof(*entry), GFP_KERNEL);
++  if (!entry) {
++   /* Discard a partial snapshot: never prune from incomplete input. */
++   struct uid_data *item, *next;
++   list_for_each_entry_safe(item, next, uid_list, list) {
++    list_del(&item->list);
++    kfree(item);
++   }
++   kfree(content);
++   return -ENOMEM;
++  }
++  entry->uid = uid;
++  memcpy(entry->package, package, strlen(package) + 1);
++  list_add_tail(&entry->list, uid_list);
++  found++;
++ }
++ kfree(content);
++ return found ? 0 : -ENODATA;
++}
++
+ static int read_uid_whitelist(struct list_head *uid_list)
+ {
+-	struct file *fp;
+-	char *file_content = NULL;
+-	char *line, *next_line;
+-	loff_t file_size;
+-	loff_t pos = 0;
+-	int count = 0;
+-	ssize_t bytes_read;
+-	
+-	fp = ksu_filp_open_compat(KSU_UID_LIST_PATH, O_RDONLY, 0);
+-	if (IS_ERR(fp)) {
+-		pr_info("whitelist not found, fallback needed\n");
+-		return -ENOENT;
+-	}
+-
+-	file_size = fp->f_inode->i_size;
+-	if (file_size <= 0) {
+-		pr_info("whitelist file is empty\n");
+-		filp_close(fp, NULL);
+-		return -ENODATA;
+-	}
+-
+-	file_content = kzalloc(file_size + 1, GFP_ATOMIC);
+-	if (!file_content) {
+-		pr_err("failed to allocate memory for whitelist file (%lld bytes)\n", file_size);
+-		filp_close(fp, NULL);
+-		return -ENOMEM;
+-	}
+-
+-	bytes_read = ksu_kernel_read_compat(fp, file_content, file_size, &pos);
+-	if (bytes_read != file_size) {
+-		pr_err("failed to read whitelist file: read %zd bytes, expected %lld bytes\n", 
+-		       bytes_read, file_size);
+-		kfree(file_content);
+-		filp_close(fp, NULL);
+-		return -EIO;
+-	}
+-
+-	file_content[file_size] = '\0';
+-	filp_close(fp, NULL);
+-
+-	pr_info("successfully read whitelist file (%lld bytes), parsing lines...\n", file_size);
+-
+-	line = file_content;
+-	while (line && *line) {
+-		next_line = strchr(line, '\n');
+-		if (next_line) {
+-			*next_line = '\0';
+-			next_line++;
+-		}
+-
+-		char *trimmed_line = line;
+-		while (*trimmed_line == ' ' || *trimmed_line == '\t' || *trimmed_line == '\r') {
+-			trimmed_line++;
+-		}
+-
+-		if (strlen(trimmed_line) > 0) {
+-			char *line_copy = trimmed_line;
+-			char *uid_str = strsep(&line_copy, " \t");
+-			char *package_name = line_copy;
+-			
+-			if (package_name) {
+-				while (*package_name == ' ' || *package_name == '\t') {
+-					package_name++;
+-				}
+-			}
+-			
+-			if (uid_str && package_name && strlen(package_name) > 0) {
+-				u32 uid;
+-				if (!kstrtou32(uid_str, 10, &uid)) {
+-					struct uid_data *data = kzalloc(sizeof(struct uid_data), GFP_ATOMIC);
+-					if (data) {
+-						data->uid = uid;
+-						size_t pkg_len = strlen(package_name);
+-						size_t copy_len = min(pkg_len, (size_t)(KSU_MAX_PACKAGE_NAME - 1));
+-						strncpy(data->package, package_name, copy_len);
+-						data->package[copy_len] = '\0';
+-						
+-						list_add_tail(&data->list, uid_list);
+-						count++;
+-						
+-						if (count % 100 == 0) {
+-							pr_info("parsed %d packages so far...\n", count);
+-						}
+-					} else {
+-						pr_err("failed to allocate memory for uid_data\n");
+-					}
+-				} else {
+-					pr_warn("invalid uid format in line: %s\n", trimmed_line);
+-				}
+-			} else {
+-				pr_warn("invalid line format: %s\n", trimmed_line);
+-			}
+-		}
+-
+-		line = next_line;
+-	}
+-	
+-	kfree(file_content);
+-	pr_info("successfully loaded %d uids from whitelist\n", count);
+-	return count > 0 ? 0 : -ENODATA;
++ return read_uid_file(uid_list, KSU_UID_LIST_PATH, false);
+ }
+ 
+ static int get_pkg_from_apk_path(char *pkg, const char *path)
+@@ -577,7 +556,9 @@
+ 	pr_info("track_throne triggered, attempting whitelist read\n");
+ 	
+ 	// Try read whitelist first
+-	int ret = read_uid_whitelist(&uid_list);
++	int ret = read_uid_file(&uid_list, SYSTEM_PACKAGES_LIST_PATH, true);
++	if (ret < 0)
++		ret = read_uid_whitelist(&uid_list);
+ 	
+ 	if (ret < 0) {
+ 		pr_info("whitelist read failed (%d), request userspace scan, falling back to user_de \n", ret);
+@@ -650,12 +631,24 @@
+ 	}
+ }
+ 
++static void manager_scan_worker(struct work_struct *work)
++{
++ track_throne();
++}
++
++static DECLARE_DELAYED_WORK(manager_scan_work, manager_scan_worker);
++
++void ksu_schedule_manager_scan(void)
++{
++ mod_delayed_work(system_unbound_wq, &manager_scan_work, msecs_to_jiffies(1000));
++}
++
+ void ksu_throne_tracker_init()
+ {
+-	// nothing to do
++ /* First scan is requested when /data becomes available. */
+ }
+ 
+ void ksu_throne_tracker_exit()
+ {
+-	// nothing to do
+-}
++	cancel_delayed_work_sync(&manager_scan_work);
++}
+--- a/drivers/kernelsu/core_hook.c
++++ b/drivers/kernelsu/core_hook.c
+@@ -224,7 +224,7 @@
+ 	pr_info("renameat: %s -> %s, new path: %s\n", old_dentry->d_iname,
+ 		new_dentry->d_iname, buf);
+ 
+-	track_throne();
++	ksu_schedule_manager_scan();
+ 	
+ 	// Also request userspace scan for next time
+ 	ksu_request_userspace_scan();
+--- a/drivers/kernelsu/ksud.c
++++ b/drivers/kernelsu/ksud.c
+@@ -1,3 +1,4 @@
++#include <linux/cred.h>
+ #include <asm/current.h>
+ #include <linux/compat.h>
+ #include <linux/cred.h>
+@@ -17,6 +18,7 @@
+ #include "arch.h"
+ #include "klog.h" // IWYU pragma: keep
+ #include "ksud.h"
++#include "throne_tracker.h"
+ #include "kernel_compat.h"
+ #include "selinux/selinux.h"
+ 
+@@ -73,6 +75,7 @@
+ 	done = true;
+ 	pr_info("on_post_fs_data!\n");
+ 	ksu_load_allow_list();
++	ksu_schedule_manager_scan();
+ 	// sanity check, this may influence the performance
+ 	stop_input_hook();
+ 
+@@ -180,6 +183,22 @@
+ 	return 0;
+ }
+ 
++/* Manual 4.14 exec hook: use the new argv, not the previous process image. */
++int ksu_handle_init_exec(const char *filename, const char __user *argv1)
++{
++ char argument[32] = {0};
++ if (!ksu_execveat_hook || !filename || current_uid().val != 0)
++  return 0;
++ if (strcmp(filename, "/system/bin/init") && strcmp(filename, "/init") &&
++     !strstarts(filename, "/system/bin/app_process"))
++  return 0;
++ if (!IS_ERR_OR_NULL(argv1)) {
++  if (strncpy_from_user(argument, argv1, sizeof(argument) - 1) < 0)
++   return 0;
++ }
++ return ksu_handle_bprm_ksud(filename, argument, NULL, 0);
++}
++
+ int ksu_handle_pre_ksud(const char *filename)
+ {
+ 	if (likely(!ksu_execveat_hook))

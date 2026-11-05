@@ -1,0 +1,68 @@
+{
+  "name": "Singularity v1 @ProjectNoci",
+  "target": [
+    "vayu",
+    "bhima"
+  ],
+  "android_userspace_target": "13-16, compatible OSS vendor only; universal ABI not established",
+  "kernel_repository": "https://github.com/crdroidandroid/android_kernel_xiaomi_sm8150",
+  "branch": "13.0",
+  "commit": "4e83886b5de9184008167d14d1b29b6f12feeca3",
+  "version": "4.14.336",
+  "configuration": "Derived from user-provided working DerpFest A13 kernel config; maps charger options to this source; preserves module versioning/BPF/boot drivers; builds WLAN in",
+  "toolchain": "Ubuntu clang/LLD 18.1.3 (1ubuntu1), integrated assembler; no LTO/CFI as reference kernel",
+  "root": {
+    "project": "SukiSU-Ultra",
+    "tag": "v3.2.0",
+    "commit": "0af1ab28450a1df548850b4a05ba82a5cbef478e",
+    "driver": 13375,
+    "hook": "manual, source-existing gated hooks; 4.14 compatibility from previous build",
+    "sepolicy_compat": "KernelSU v0.9.5 b766b98513b5a7eb33bc1c4a76b5702bf1288f07",
+    "local_fixes": [
+      "Explicit 4.14 exec hook passes actual new argv[1] into init stage handling",
+      "Boot data-ready manager scan",
+      "Asynchronous post-rename manager scan",
+      "Read standard PackageManager packages.list before optional custom UID list",
+      "Keep official certificate verification and manager/root authorization",
+      "Zero-initialize legacy4.14 crypto descriptor flags during certificate hashing"
+    ]
+  },
+  "installer": {
+    "repository": "https://github.com/osm0sis/AnyKernel3",
+    "commit": "08e9d1281f38019efcf8818e18525e55e679046f",
+    "fixes": [
+      "Capture actual unpack status",
+      "Raw Image payload preserves target kernel compression",
+      "Header0 appended DTB/header2 separate DTB",
+      "Matched source-built DTB+DTBO, retains ROM ramdisk/header/cmdline"
+    ]
+  },
+  "reference": {
+    "boot_rom": "DerpFest Android13, build2023-10-03",
+    "kernel": "4.14.326-Derp",
+    "header": 2,
+    "pagesize": 4096,
+    "partition_size": 134217728,
+    "kernel_format": "raw",
+    "ramdisk_format": "gzip",
+    "provided_rom_image_in_source": false
+  },
+  "status": {
+    "compile": "passed, exit0",
+    "host_tests": "29 unit plus9 real ARM repack cases passed",
+    "baseline_device_boot": "R2 confirmed by user and screenshot",
+    "final_device_boot": "unknown",
+    "root_runtime": "unknown",
+    "vendor_module_ABI": "unknown, no vendor partitions supplied",
+    "fps_benchmark": "unknown"
+  },
+  "performance": {
+    "cpu": "performance default; input boost120ms, 1785600/2419200/2956800kHz",
+    "scheduler": "existing WALT, input sched_boost mode1; HZ250; schedstats disabled",
+    "gpu": "performance default, stock source OPP/voltage tables",
+    "buses": "Singularity bus driver; input/frame floor64ms DDR3879/LLCC4577 existing devbw units; wakepeak1000ms; screen-off cancels votes; existing devfreq maximum wins; no devfreq structure ABI changes",
+    "storage": "deadline default; soft read/write expiry100/1000ms; UFS readahead256KiB",
+    "memory": "LZ4 zram retained; UFS asset readahead changed; no mass reclaim or forced process kills",
+    "build": "IKHEADERS and debug information disabled; BPF JIT and module versioning retained"
+  }
+}
